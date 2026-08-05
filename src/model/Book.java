@@ -6,18 +6,25 @@ public class Book {
 
     private int id;
     private String name;
-    private String category;
+    private BookCategory category;
     private boolean borrowed;
     private LocalDate borrowingDate;
     private int borrowingPeriod;
     private LocalDate returnDate;
 
-    public Book(String name, String category) {
+    // Constructor with Enum
+    public Book(String name, BookCategory category) {
         this.name = name;
         this.category = category;
         this.borrowed = false;
     }
 
+    // Convenience constructor with String (converts automatically)
+    public Book(String name, String category) {
+        this(name, BookCategory.fromString(category));
+    }
+
+    // Getters and Setters
     public int getId() {
         return id;
     }
@@ -30,8 +37,30 @@ public class Book {
         return name;
     }
 
-    public String getCategory() {
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public BookCategory getCategory() {
         return category;
+    }
+
+    // Get category as display name string (for database storage)
+    public String getCategoryDisplayName() {
+        return category.getDisplayName();
+    }
+
+    // Get category as enum name string (for database storage alternative)
+    public String getCategoryEnumName() {
+        return category.name();
+    }
+
+    public void setCategory(BookCategory category) {
+        this.category = category;
+    }
+
+    public void setCategory(String category) {
+        this.category = BookCategory.fromString(category);
     }
 
     public boolean getBorrowed() {
@@ -70,5 +99,15 @@ public class Book {
         borrowingDate = null;
         returnDate = null;
         borrowingPeriod = 0;
+    }
+
+    @Override
+    public String toString() {
+        return "Book{" +
+                "id=" + id +
+                ", name='" + name + '\'' +
+                ", category=" + category.getDisplayName() +
+                ", borrowed=" + borrowed +
+                '}';
     }
 }
