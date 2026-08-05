@@ -9,16 +9,18 @@ import java.util.*;
 
 public class Library {
 
-    private static final String[] CATEGORIES = {
-            "Biology", "Maths", "History", "Chemistry", "Politics"
-    };
+    // Get categories as enum array
+    public static BookCategory[] getCategories() {
+        return BookCategory.values();
+    }
+
+    // Get categories as display name strings
+    public static String[] getCategoryDisplayNames() {
+        return BookCategory.getDisplayNames();
+    }
 
     public Library() {
         // No in‑memory initialisation – all data is read from the DB on demand.
-    }
-
-    public static String[] getCategories() {
-        return CATEGORIES;
     }
 
     // ---------- Add a new book ----------
@@ -29,7 +31,7 @@ public class Library {
              PreparedStatement pstmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
 
             pstmt.setString(1, book.getName());
-            pstmt.setString(2, book.getCategory());
+            pstmt.setString(2, book.getCategoryDisplayName()); // Store display name
             pstmt.setBoolean(3, book.getBorrowed());
             pstmt.setDate(4, book.getBorrowingDate() != null ? Date.valueOf(book.getBorrowingDate()) : null);
             pstmt.setInt(5, book.getBorrowingPeriod());
@@ -71,7 +73,7 @@ public class Library {
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, name);
             pstmt.setString(2, category);
-            return pstmt.executeUpdate(); // returns number of deleted rows
+            return pstmt.executeUpdate();
         } catch (SQLException e) {
             e.printStackTrace();
             return -1;
@@ -169,8 +171,10 @@ public class Library {
     public String getSummary() {
         int totalBooks = 0, borrowedCount = 0;
         Map<String, Integer> catCounts = new LinkedHashMap<>();
-        for (String cat : CATEGORIES) {
-            catCounts.put(cat, 0);
+
+        // Initialize with all categories
+        for (BookCategory cat : BookCategory.values()) {
+            catCounts.put(cat.getDisplayName(), 0);
         }
 
         String sql = "SELECT category, COUNT(*) as cnt, SUM(borrowed) as borrowed_sum FROM books GROUP BY category";
@@ -201,8 +205,8 @@ public class Library {
     // ---------- Get category counts ----------
     public Map<String, Integer> getCategoryCounts() {
         Map<String, Integer> counts = new LinkedHashMap<>();
-        for (String cat : CATEGORIES) {
-            counts.put(cat, 0);
+        for (BookCategory cat : BookCategory.values()) {
+            counts.put(cat.getDisplayName(), 0);
         }
         String sql = "SELECT category, COUNT(*) as cnt FROM books GROUP BY category";
         try (Connection conn = DBConnection.getConnection();
@@ -242,7 +246,7 @@ public class Library {
              ResultSet rs = stmt.executeQuery(sql)) {
             while (rs.next()) {
                 Book book = mapResultSetToBook(rs);
-                String key = book.getName() + "|" + book.getCategory();
+                String key = book.getName() + "|" + book.getCategoryDisplayName();
                 BookGroup group = groupMap.get(key);
                 if (group == null) {
                     group = new BookGroup(book.getName(), book.getCategory());
@@ -258,7 +262,10 @@ public class Library {
 
     // ---------- Helper: map ResultSet to Book ----------
     private Book mapResultSetToBook(ResultSet rs) throws SQLException {
-        Book book = new Book(rs.getString("name"), rs.getString("category"));
+        String categoryStr = rs.getString("category");
+        BookCategory category = BookCategory.fromString(categoryStr);
+
+        Book book = new Book(rs.getString("name"), category);
         book.setId(rs.getInt("id"));
         book.setBorrowed(rs.getBoolean("borrowed"));
 
