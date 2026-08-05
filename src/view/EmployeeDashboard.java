@@ -1,6 +1,7 @@
 package view;
 
 import model.Book;
+import model.BookCategory;
 import model.BookGroup;
 import model.Library;
 
@@ -35,6 +36,9 @@ public class EmployeeDashboard extends JFrame {
     // Table models for user and employee management
     private DefaultTableModel userTableModel;
     private DefaultTableModel employeeTableModel;
+
+    private static final double LATE_FEE_PER_DAY = 15.0;
+    private double lastReturnFine = 0.0;
 
     public EmployeeDashboard() {
         super("Library Management System - Employee Dashboard");
@@ -99,7 +103,7 @@ public class EmployeeDashboard extends JFrame {
         gbc.gridx = 2;
         panel.add(new JLabel("Category:"), gbc);
         gbc.gridx = 3;
-        categoryComboBox = new JComboBox<>(Library.getCategories());
+        categoryComboBox = new JComboBox<>(BookCategory.getDisplayNames());
         panel.add(categoryComboBox, gbc);
 
         gbc.gridx = 4;
@@ -275,10 +279,7 @@ public class EmployeeDashboard extends JFrame {
         return employeeManagementPanel;
     }
 
-    // ---------- Refresh Users (Customers) ----------
-    private static final double LATE_FEE_PER_DAY = 15.0;
-
-    // Returns the fine that should be DISPLAYED after delaying on retuning book
+    // ---------- Fine Calculation Methods ----------
     private double computeDisplayFine(String status, java.sql.Date dueDate, double storedFine) {
         if (!"borrowed".equals(status) || dueDate == null) {
             return storedFine;
@@ -294,6 +295,7 @@ public class EmployeeDashboard extends JFrame {
         return status;
     }
 
+    // ---------- Refresh Users (Customers) ----------
     private void refreshUsers() {
         userTableModel.setRowCount(0);
         String sql = "SELECT u.user_id, u.first_name, u.last_name, u.email, u.phone_number, " +
@@ -301,8 +303,7 @@ public class EmployeeDashboard extends JFrame {
                 "(SELECT COUNT(*) FROM borrowings b WHERE b.user_id = u.user_id AND b.status = 'borrowed') AS books_borrowed " +
                 "FROM users u JOIN members m ON u.user_id = m.user_id " +
                 "WHERE u.role = 'user' ORDER BY u.user_id";
-        // Live overdue amounts aren't stored anywhere (they only get written to fine_amount/current_fines
-        // when a book is actually returned), so compute them here from any still-borrowed, past-due rows.
+
         String overdueSql = "SELECT user_id, return_date FROM borrowings WHERE status = 'borrowed' AND return_date < ?";
         Map<Integer, Double> overdueByUser = new HashMap<>();
         try (Connection conn = db.DBConnection.getConnection();
@@ -688,9 +689,7 @@ public class EmployeeDashboard extends JFrame {
         String name = (String) table.getModel().getValueAt(modelRow, 1);
 
         double settledFines = 0.0;
-        // Any book still out and overdue keeps accruing $15/day live, so we need each
-        // such row's currently-owed amount (not just the flat members.current_fines total).
-        Map<Integer, Double> overdueRows = new HashMap<>(); // borrowing_id -> currently-owed amount
+        Map<Integer, Double> overdueRows = new HashMap<>();
 
         String memberSql = "SELECT current_fines FROM members WHERE user_id = ?";
         String overdueSql = "SELECT borrowing_id, return_date FROM borrowings " +
@@ -732,9 +731,6 @@ public class EmployeeDashboard extends JFrame {
                 "Settle Fine", JOptionPane.YES_NO_OPTION);
         if (confirm != JOptionPane.YES_OPTION) return;
 
-        // Note: any books in `overdueRows` are still checked out — paying today's accrued
-        // amount doesn't return the book. We reset each one's due date to today so tomorrow's
-        // calculation starts counting fresh, instead of re-charging for the days just paid.
         String zeroMemberSql = "UPDATE members SET current_fines = 0 WHERE user_id = ?";
         String resetDueDateSql = "UPDATE borrowings SET return_date = ? WHERE borrowing_id = ?";
 
@@ -889,7 +885,7 @@ public class EmployeeDashboard extends JFrame {
                 String countText = (mode == FilterMode.BORROWED)
                         ? (g.borrowedCount() + " / " + g.total())
                         : (g.available() + " / " + g.total());
-                groupTableModel.addRow(new Object[]{g.getName(), g.getCategory(), countText, idsToString(g)});
+                groupTableModel.addRow(new Object[]{g.getName(), g.getCategoryDisplayName(), countText, idsToString(g)});
             }
         }
 
@@ -914,8 +910,8 @@ public class EmployeeDashboard extends JFrame {
             }
             int modelRow = groupTable.convertRowIndexToModel(viewRow);
             String name = (String) groupTableModel.getValueAt(modelRow, 0);
-            String category = (String) groupTableModel.getValueAt(modelRow, 1);
-            selectedGroup = findGroup(name, category);
+            String categoryDisplay = (String) groupTableModel.getValueAt(modelRow, 1);
+            selectedGroup = findGroup(name, categoryDisplay);
             refreshCopyTable();
         }
 
@@ -953,8 +949,8 @@ public class EmployeeDashboard extends JFrame {
             }
             int modelRow = groupTable.convertRowIndexToModel(viewRow);
             String name = (String) groupTableModel.getValueAt(modelRow, 0);
-            String category = (String) groupTableModel.getValueAt(modelRow, 1);
-            BookGroup group = findGroup(name, category);
+            String categoryDisplay = (String) groupTableModel.getValueAt(modelRow, 1);
+            BookGroup group = findGroup(name, categoryDisplay);
             if (group == null) return null;
             for (Book b : group.getCopies()) {
                 if (b.getBorrowed()) return b;
@@ -964,11 +960,16 @@ public class EmployeeDashboard extends JFrame {
     }
 
     // ---------- Helper Methods ----------
-    private BookGroup findGroup(String name, String category) {
-        for (BookGroup group : library.getGroups()) {
-            if (group.getName().equals(name) && group.getCategory().equals(category)) {
-                return group;
+    private BookGroup findGroup(String name, String categoryDisplay) {
+        try {
+            BookCategory category = BookCategory.fromString(categoryDisplay);
+            for (BookGroup group : library.getGroups()) {
+                if (group.getName().equals(name) && group.getCategory() == category) {
+                    return group;
+                }
             }
+        } catch (IllegalArgumentException e) {
+            // Category not found
         }
         return null;
     }
@@ -982,15 +983,67 @@ public class EmployeeDashboard extends JFrame {
         return sb.toString();
     }
 
+    /**
+     * Formats a list of integers into a compact range string.
+     * Example: [1,2,3,5,6,7,10] -> "1-3, 5-7, 10"
+     * Example: [1,2,3,4,5] -> "1-5"
+     * Example: [1,3,5,7,9] -> "1, 3, 5, 7, 9"
+     */
+    private String formatIdRanges(List<Integer> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return "";
+        }
+
+        // Sort the IDs
+        Collections.sort(ids);
+
+        StringBuilder rangeBuilder = new StringBuilder();
+        int start = ids.get(0);
+        int end = ids.get(0);
+
+        for (int i = 1; i < ids.size(); i++) {
+            int current = ids.get(i);
+            if (current == end + 1) {
+                // Continue the range
+                end = current;
+            } else {
+                // End of a range
+                if (rangeBuilder.length() > 0) {
+                    rangeBuilder.append(", ");
+                }
+                if (start == end) {
+                    rangeBuilder.append(start);
+                } else {
+                    rangeBuilder.append(start).append("-").append(end);
+                }
+                start = current;
+                end = current;
+            }
+        }
+
+        // Add the last range
+        if (rangeBuilder.length() > 0) {
+            rangeBuilder.append(", ");
+        }
+        if (start == end) {
+            rangeBuilder.append(start);
+        } else {
+            rangeBuilder.append(start).append("-").append(end);
+        }
+
+        return rangeBuilder.toString();
+    }
+
     private void addBook() {
         String name = bookNameField.getText().trim();
-        String category = (String) categoryComboBox.getSelectedItem();
+        String categoryDisplay = (String) categoryComboBox.getSelectedItem();
         String quantityText = quantityField.getText().trim();
 
         if (name.isEmpty()) {
             showError("Please enter the name of the book.");
             return;
         }
+
         int quantity;
         try {
             quantity = Integer.parseInt(quantityText);
@@ -1003,17 +1056,32 @@ public class EmployeeDashboard extends JFrame {
             return;
         }
 
+        // Convert display name to Enum
+        BookCategory category;
+        try {
+            category = BookCategory.fromString(categoryDisplay);
+        } catch (IllegalArgumentException e) {
+            showError("Invalid category: " + categoryDisplay);
+            return;
+        }
+
         List<Integer> newIds = new ArrayList<>();
         for (int i = 0; i < quantity; i++) {
             Book newBook = new Book(name, category);
-            newIds.add(library.addBook(newBook));
+            int id = library.addBook(newBook);
+            if (id > 0) {
+                newIds.add(id);
+            }
         }
 
         bookNameField.setText("");
         quantityField.setText("1");
         updateStatus();
-        selectGroupInAllTabs(name, category);
-        showSuccess("Added " + quantity + " copy(ies) of \"" + name + "\".\nIDs: " + newIds);
+        selectGroupInAllTabs(name, categoryDisplay);
+
+        // Format the IDs as ranges for a clean display
+        String idDisplay = formatIdRanges(newIds);
+        showSuccess("Added " + quantity + " copy(ies) of \"" + name + "\".\nIDs: " + idDisplay);
     }
 
     private void editSelectedTitle(BookTabPanel tab) {
@@ -1024,7 +1092,7 @@ public class EmployeeDashboard extends JFrame {
         }
         int modelRow = tab.groupTable.convertRowIndexToModel(viewRow);
         String oldName = (String) tab.groupTableModel.getValueAt(modelRow, 0);
-        String oldCategory = (String) tab.groupTableModel.getValueAt(modelRow, 1);
+        String oldCategoryDisplay = (String) tab.groupTableModel.getValueAt(modelRow, 1);
 
         String newName = JOptionPane.showInputDialog(this, "Enter new title:", oldName);
         if (newName == null || newName.trim().isEmpty()) {
@@ -1033,21 +1101,21 @@ public class EmployeeDashboard extends JFrame {
         }
         newName = newName.trim();
 
-        JComboBox<String> catCombo = new JComboBox<>(Library.getCategories());
-        catCombo.setSelectedItem(oldCategory);
+        JComboBox<String> catCombo = new JComboBox<>(BookCategory.getDisplayNames());
+        catCombo.setSelectedItem(oldCategoryDisplay);
         int result = JOptionPane.showConfirmDialog(this, catCombo, "Select new category:", JOptionPane.OK_CANCEL_OPTION);
         if (result != JOptionPane.OK_OPTION) return;
-        String newCategory = (String) catCombo.getSelectedItem();
+        String newCategoryDisplay = (String) catCombo.getSelectedItem();
 
         int confirm = JOptionPane.showConfirmDialog(this,
-                "Update all copies of \"" + oldName + "\" (" + oldCategory + ")\n" +
-                        "to \"" + newName + "\" (" + newCategory + ")?",
+                "Update all copies of \"" + oldName + "\" (" + oldCategoryDisplay + ")\n" +
+                        "to \"" + newName + "\" (" + newCategoryDisplay + ")?",
                 "Confirm Update", JOptionPane.YES_NO_OPTION);
         if (confirm != JOptionPane.YES_OPTION) return;
 
-        if (library.updateGroup(oldName, oldCategory, newName, newCategory)) {
+        if (library.updateGroup(oldName, oldCategoryDisplay, newName, newCategoryDisplay)) {
             updateStatus();
-            selectGroupInAllTabs(newName, newCategory);
+            selectGroupInAllTabs(newName, newCategoryDisplay);
             showSuccess("Title updated successfully.");
         } else {
             showError("Failed to update title.");
@@ -1062,9 +1130,9 @@ public class EmployeeDashboard extends JFrame {
         }
         int modelRow = tab.groupTable.convertRowIndexToModel(viewRow);
         String name = (String) tab.groupTableModel.getValueAt(modelRow, 0);
-        String category = (String) tab.groupTableModel.getValueAt(modelRow, 1);
+        String categoryDisplay = (String) tab.groupTableModel.getValueAt(modelRow, 1);
 
-        BookGroup group = findGroup(name, category);
+        BookGroup group = findGroup(name, categoryDisplay);
         if (group == null) {
             showError("Title not found.");
             return;
@@ -1073,7 +1141,7 @@ public class EmployeeDashboard extends JFrame {
         int totalCopies = group.total();
         int borrowedCopies = group.borrowedCount();
 
-        String message = "Delete all copies of \"" + name + "\" (" + category + ")?\n\n" +
+        String message = "Delete all copies of \"" + name + "\" (" + categoryDisplay + ")?\n\n" +
                 "Total copies: " + totalCopies + "\n" +
                 "Borrowed copies: " + borrowedCopies + "\n" +
                 "Available copies: " + group.available() + "\n\n";
@@ -1094,7 +1162,7 @@ public class EmployeeDashboard extends JFrame {
 
         if (confirm != JOptionPane.YES_OPTION) return;
 
-        int deleted = library.deleteGroup(name, category);
+        int deleted = library.deleteGroup(name, categoryDisplay);
         if (deleted > 0) {
             updateStatus();
             showSuccess("Deleted " + deleted + " copy(ies) of \"" + name + "\" successfully.");
@@ -1113,10 +1181,10 @@ public class EmployeeDashboard extends JFrame {
                 "Confirm Deletion", JOptionPane.YES_NO_OPTION,
                 JOptionPane.QUESTION_MESSAGE, loadIcon("images/delete.jpg"));
         if (confirm == JOptionPane.YES_OPTION) {
-            String name = book.getName(), category = book.getCategory();
+            String name = book.getName(), categoryDisplay = book.getCategoryDisplayName();
             if (library.removeBook(id)) {
                 updateStatus();
-                selectGroupInAllTabs(name, category);
+                selectGroupInAllTabs(name, categoryDisplay);
                 showSuccess("Book removed successfully.");
             } else {
                 showError("Sorry! This book is currently borrowed.");
@@ -1136,10 +1204,10 @@ public class EmployeeDashboard extends JFrame {
                 "Confirm Deletion", JOptionPane.YES_NO_OPTION,
                 JOptionPane.QUESTION_MESSAGE, loadIcon("images/delete.jpg"));
         if (confirm == JOptionPane.YES_OPTION) {
-            String name = book.getName(), category = book.getCategory();
+            String name = book.getName(), categoryDisplay = book.getCategoryDisplayName();
             if (library.removeBook(id)) {
                 updateStatus();
-                selectGroupInAllTabs(name, category);
+                selectGroupInAllTabs(name, categoryDisplay);
                 showSuccess("Book removed successfully.");
             } else {
                 showError("Sorry! This book is currently borrowed.");
