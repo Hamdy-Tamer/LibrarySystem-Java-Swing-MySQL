@@ -2,6 +2,7 @@ package view;
 
 import auth.Login;
 import model.Book;
+import model.BookCategory;
 import model.BookGroup;
 import model.Library;
 import model.User;
@@ -28,6 +29,8 @@ public class UserDashboard extends JFrame {
     private JTabbedPane tabbedPane;
     private List<BookTabPanel> tabPanels = new ArrayList<>();
     private JPanel historyPanel;
+    private static final double LATE_FEE_PER_DAY = 15.0;
+    private double lastReturnFine = 0.0;
 
     public UserDashboard(User user) {
         super("Library - User Dashboard");
@@ -357,7 +360,7 @@ public class UserDashboard extends JFrame {
                 } else {
                     countText = g.available() + " / " + g.total();
                 }
-                groupTableModel.addRow(new Object[]{g.getName(), g.getCategory(), countText, idsToString(g)});
+                groupTableModel.addRow(new Object[]{g.getName(), g.getCategoryDisplayName(), countText, idsToString(g)});
             }
         }
 
@@ -381,8 +384,8 @@ public class UserDashboard extends JFrame {
             }
             int modelRow = groupTable.convertRowIndexToModel(viewRow);
             String name = (String) groupTableModel.getValueAt(modelRow, 0);
-            String category = (String) groupTableModel.getValueAt(modelRow, 1);
-            selectedGroup = findGroup(name, category);
+            String categoryDisplay = (String) groupTableModel.getValueAt(modelRow, 1);
+            selectedGroup = findGroup(name, categoryDisplay);
             refreshCopyTable();
         }
 
@@ -413,11 +416,16 @@ public class UserDashboard extends JFrame {
     }
 
     // ---------- Helper Methods ----------
-    private BookGroup findGroup(String name, String category) {
-        for (BookGroup group : library.getGroups()) {
-            if (group.getName().equals(name) && group.getCategory().equals(category)) {
-                return group;
+    private BookGroup findGroup(String name, String categoryDisplay) {
+        try {
+            BookCategory category = BookCategory.fromString(categoryDisplay);
+            for (BookGroup group : library.getGroups()) {
+                if (group.getName().equals(name) && group.getCategory() == category) {
+                    return group;
+                }
             }
+        } catch (IllegalArgumentException e) {
+            // Category not found
         }
         return null;
     }
@@ -451,9 +459,9 @@ public class UserDashboard extends JFrame {
             if (library.borrowBook(id, period)) {
                 addBorrowingHistory(id, period);
                 book = library.findBook(id);
-                String name = book.getName(), category = book.getCategory();
+                String name = book.getName(), categoryDisplay = book.getCategoryDisplayName();
                 updateStatus();
-                selectGroupInAllTabs(name, category);
+                selectGroupInAllTabs(name, categoryDisplay);
                 tab.refreshCopyTable();
                 showSuccess("Borrowed copy #" + id + ". Return Date: " + book.getReturnDate());
             }
@@ -499,11 +507,11 @@ public class UserDashboard extends JFrame {
                 "Return copy #" + id + "?",
                 "Confirm Return", JOptionPane.YES_NO_OPTION);
         if (confirm == JOptionPane.YES_OPTION) {
-            String name = book.getName(), category = book.getCategory();
+            String name = book.getName(), categoryDisplay = book.getCategoryDisplayName();
             if (library.returnBook(id)) {
                 updateBorrowingHistory(id);
                 updateStatus();
-                selectGroupInAllTabs(name, category);
+                selectGroupInAllTabs(name, categoryDisplay);
                 tab.refreshCopyTable();
                 if (lastReturnFine > 0) {
                     showSuccess("Copy #" + id + " has been returned.\n" +
@@ -515,8 +523,6 @@ public class UserDashboard extends JFrame {
             }
         }
     }
-
-    private static final double LATE_FEE_PER_DAY = 15.0;
 
     private void updateBorrowingHistory(int bookId) {
         String selectSql = "SELECT borrowing_id, return_date FROM borrowings " +
@@ -542,7 +548,7 @@ public class UserDashboard extends JFrame {
                 }
             }
 
-            if (borrowingId == -1) return; // no matching active borrowing found
+            if (borrowingId == -1) return;
 
             long daysLate = ChronoUnit.DAYS.between(dueDate, today);
             double fine = daysLate > 0 ? daysLate * LATE_FEE_PER_DAY : 0.0;
@@ -568,8 +574,6 @@ public class UserDashboard extends JFrame {
             ex.printStackTrace();
         }
     }
-
-    private double lastReturnFine = 0.0;
 
     private void updateStatus() {
         for (BookTabPanel tab : tabPanels) {
