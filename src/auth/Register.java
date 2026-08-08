@@ -1,15 +1,12 @@
 package auth;
 
-import db.DBConnection;
+import dao.UserDAO;
+import model.User;
 
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
 import java.io.File;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 
 public class Register extends JDialog {
 
@@ -21,6 +18,8 @@ public class Register extends JDialog {
     private JPasswordField confirmPasswordField;
     private JButton registerBtn;
     private JButton loginBtn;
+
+    private final UserDAO userDAO = new UserDAO();
 
     public Register(JFrame parent) {
         super(parent, "Register - New User", true);
@@ -165,74 +164,37 @@ public class Register extends JDialog {
             return;
         }
 
-        // --- Insert into database ---
-        try (Connection conn = DBConnection.getConnection()) {
-            // Check if email already exists
-            String checkEmailSql = "SELECT email FROM users WHERE email = ?";
-            try (PreparedStatement checkStmt = conn.prepareStatement(checkEmailSql)) {
-                checkStmt.setString(1, email);
-                ResultSet rs = checkStmt.executeQuery();
-                if (rs.next()) {
-                    showError("This email is already registered. Please log in.");
-                    return;
-                }
-            }
-
-            // Check if phone number already exists
-            String checkPhoneSql = "SELECT phone_number FROM users WHERE phone_number = ?";
-            try (PreparedStatement checkStmt = conn.prepareStatement(checkPhoneSql)) {
-                checkStmt.setString(1, phone);
-                ResultSet rs = checkStmt.executeQuery();
-                if (rs.next()) {
-                    showError("This phone number is already registered. Please use a different number.");
-                    return;
-                }
-            }
-
-            // Insert user (role = 'user')
-            String insertUser = "INSERT INTO users (first_name, last_name, email, password, phone_number, role) VALUES (?, ?, ?, ?, ?, 'user')";
-            int userId;
-            try (PreparedStatement pstmt = conn.prepareStatement(insertUser, PreparedStatement.RETURN_GENERATED_KEYS)) {
-                pstmt.setString(1, firstName);
-                pstmt.setString(2, lastName);
-                pstmt.setString(3, email);
-                pstmt.setString(4, password);
-                pstmt.setString(5, phone);
-                pstmt.executeUpdate();
-
-                ResultSet keys = pstmt.getGeneratedKeys();
-                if (keys.next()) {
-                    userId = keys.getInt(1);
-                } else {
-                    showError("Registration failed. Please try again.");
-                    return;
-                }
-            }
-
-            // Insert into members table
-            String memberCode = "M" + System.currentTimeMillis();
-            String insertMember = "INSERT INTO members (user_id, member_code) VALUES (?, ?)";
-            try (PreparedStatement pstmt = conn.prepareStatement(insertMember)) {
-                pstmt.setInt(1, userId);
-                pstmt.setString(2, memberCode);
-                pstmt.executeUpdate();
-            }
-
-            JOptionPane.showMessageDialog(this,
-                    "Registration successful!\nYou can now log in.",
-                    "Success",
-                    JOptionPane.INFORMATION_MESSAGE,
-                    loadIcon("images/success.jpg"));
-            dispose();
-            // Automatically switch to login after successful registration
-            JFrame parentFrame = getParentFrame();
-            Login login = new Login(parentFrame);
-            login.setVisible(true);
-
-        } catch (SQLException ex) {
-            ex.printStackTrace();
-            showError("Database error: " + ex.getMessage());
+        // --- Uniqueness checks via DAO ---
+        if (userDAO.emailExists(email)) {
+            showError("This email is already registered. Please log in.");
+            return;
         }
+        if (userDAO.phoneExists(phone)) {
+            showError("This phone number is already registered. Please use a different number.");
+            return;
+        }
+
+        // --- Build user and delegate hashing + insertion to UserDAO ---
+        User newUser = new User(firstName, lastName, email, password); // plain password here
+        newUser.setPhoneNumber(phone);
+
+        int userId = userDAO.registerUser(newUser); // UserDAO hashes the password before storing
+
+        if (userId == -1) {
+            showError("Registration failed. Please try again.");
+            return;
+        }
+
+        JOptionPane.showMessageDialog(this,
+                "Registration successful!\nYou can now log in.",
+                "Success",
+                JOptionPane.INFORMATION_MESSAGE,
+                loadIcon("images/success.jpg"));
+        dispose();
+        // Automatically switch to login after successful registration
+        JFrame parentFrame = getParentFrame();
+        Login login = new Login(parentFrame);
+        login.setVisible(true);
     }
 
     private void switchToLogin() {
