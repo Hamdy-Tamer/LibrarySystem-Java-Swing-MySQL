@@ -650,7 +650,7 @@ public class EmployeeDashboard extends JFrame {
         JScrollPane scrollPane = new JScrollPane(historyTable);
 
         String sql = "SELECT b.borrowing_id, b.book_id, bk.name, b.borrowing_date, b.return_date, b.status, b.fine_amount " +
-                "FROM borrowings b JOIN books bk ON b.book_id = bk.id WHERE b.user_id = ? ORDER BY b.borrowing_date DESC";
+                "FROM borrowings b JOIN books bk ON b.book_id = bk.book_id WHERE b.user_id = ? ORDER BY b.borrowing_date DESC";
         try (Connection conn = db.DBConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setInt(1, userId);
