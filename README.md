@@ -10,10 +10,11 @@
 
 ## 📖 Description
 
-A complete **Library Management System** built with **Java Swing** for the user interface and **MySQL** for persistent data storage. The system features **role‑based dashboards** (Employee & User), **fine management** ($15/day for overdue books), **user/employee management**, and **real‑time borrowing history**.
+A complete **Library Management System** built with **Java Swing** for the user interface and **MySQL** for persistent data storage. The system features **role‑based dashboards** (Employee & User), **fine management** ($15/day for overdue books), **user/employee management**, **SHA‑256 password hashing**, and **real‑time borrowing history**.
 
 > **Data is stored permanently** – no data loss after restart.  
 > **Fines are calculated automatically** – $15 per day for overdue books.
+> **Passwords are never stored in plain text** – all passwords are hashed with SHA‑256 before being saved.
 
 ---
 
@@ -43,9 +44,24 @@ A complete **Library Management System** built with **Java Swing** for the user 
 ### 🔐 Authentication & Role Management
 - **Registration** – New users can register (first name, last name, email, phone, password).
 - **Login** – Secure login with email and password.
+- **Password Hashing** – Passwords are hashed with **SHA‑256** (via `util/PasswordUtil.java`) before being stored or compared; plain‑text passwords are never written to the database.
 - **Role‑Based Access**:
   - **Employees** – Full management (books, users, employees, fines).
   - **Users** – Borrow, return, and view personal history.
+
+### 🔑 Password Security
+
+All authentication logic (registration, login, uniqueness checks) is centralized in `dao/UserDAO.java`, which delegates hashing to `util/PasswordUtil.java`:
+
+- `PasswordUtil.hashPassword(String plainPassword)` – hashes a plain‑text password using SHA‑256 and returns a 64‑character hex string.
+- `PasswordUtil.verifyPassword(String plainPassword, String storedHash)` – hashes the input and compares it against the stored hash.
+
+This means:
+- `Register.java` never sends a plain‑text password to the database — `UserDAO.registerUser(...)` hashes it first.
+- `Login.java` never compares plain‑text passwords — `UserDAO.authenticate(email, password)` hashes the entered password and compares hashes.
+- Any account inserted directly via SQL (e.g. seed/admin accounts) **must** have its password pre‑hashed with SHA‑256, or that account will be unable to log in through the app. See the seed `INSERT` for the default employee account below for an example of a pre‑hashed password.
+
+> ⚠️ **Note:** Plain SHA‑256 (without a per‑user salt) is used here to keep the implementation simple and consistent with the rest of this project. For a production system, a salted/slow hash (e.g. BCrypt, PBKDF2, or Argon2) is recommended instead, since raw SHA‑256 is fast and more vulnerable to brute‑force/rainbow‑table attacks.
 
 ### 💰 Fine System
 - **$15 per day** late fee for overdue books.
@@ -63,6 +79,7 @@ A complete **Library Management System** built with **Java Swing** for the user 
 | 🖼️ **Swing** | GUI framework |
 | 🗄️ **MySQL 8** | Relational database |
 | 🔌 **JDBC** | Database connectivity |
+| 🔐 **SHA‑256** (`java.security.MessageDigest`) | Password hashing |
 | 📦 **Maven (optional)** | Dependency management |
 
 ---
@@ -110,7 +127,7 @@ CREATE TABLE users (
     first_name VARCHAR(15) NOT NULL,
     last_name VARCHAR(15) NOT NULL,
     email VARCHAR(100) NOT NULL UNIQUE,
-    password VARCHAR(255) NOT NULL,
+    password VARCHAR(255) NOT NULL, -- stores the SHA-256 hash, never plain text
     phone_number VARCHAR(15) DEFAULT NULL,
     role ENUM('user', 'employee') DEFAULT 'user',
     registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -168,9 +185,11 @@ CREATE TABLE borrowings (
 );
 
 -- First employee to add
+-- Password below is the SHA-256 hash of "temp123" — passwords must always
+-- be pre-hashed before being inserted directly via SQL, since the app only
+-- ever compares SHA-256 hashes (see util/PasswordUtil.java).
 INSERT INTO users (first_name, last_name, email, password, phone_number, role)
 VALUES ('John', 'Doe', 'johndoe707@gmail.com', '0a19533d8eae0719d0e75b3cfb2d80808111b7612756418145cc7103e621f352', '01008756488', 'employee');
--- password = temp123
 
 INSERT INTO employees (user_id, employee_code, position, hire_date, salary)
 VALUES (1, 'EMP001', 'admin', CURDATE(), 50000.00);
