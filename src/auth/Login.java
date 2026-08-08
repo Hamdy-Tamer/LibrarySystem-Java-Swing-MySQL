@@ -1,16 +1,12 @@
 package auth;
 
-import db.DBConnection;
+import dao.UserDAO;
 import model.User;
 
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
 import java.io.File;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 
 public class Login extends JDialog {
 
@@ -19,6 +15,8 @@ public class Login extends JDialog {
     private JButton loginBtn;
     private JButton registerBtn;
     private User loggedUser;
+
+    private final UserDAO userDAO = new UserDAO();
 
     public Login(JFrame parent) {
         super(parent, "Login", true);
@@ -109,33 +107,22 @@ public class Login extends JDialog {
             return;
         }
 
-        try (Connection conn = DBConnection.getConnection()) {
-            String sql = "SELECT user_id, first_name, last_name, email, phone_number, role, password FROM users WHERE email = ?";
-            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                pstmt.setString(1, email);
-                ResultSet rs = pstmt.executeQuery();
-                if (rs.next()) {
-                    String storedPassword = rs.getString("password");
-                    if (storedPassword.equals(password)) {
-                        loggedUser = new User();
-                        loggedUser.setUserId(rs.getInt("user_id"));
-                        loggedUser.setFirstName(rs.getString("first_name"));
-                        loggedUser.setLastName(rs.getString("last_name"));
-                        loggedUser.setEmail(rs.getString("email"));
-                        loggedUser.setPhoneNumber(rs.getString("phone_number"));
-                        loggedUser.setRole(rs.getString("role"));
-                        dispose();
-                        return;
-                    } else {
-                        showError("Incorrect password.");
-                    }
-                } else {
-                    showError("Email not found. Please register.");
-                }
-            }
-        } catch (SQLException ex) {
-            ex.printStackTrace();
-            showError("Database error: " + ex.getMessage());
+        // UserDAO hashes the entered password internally and compares
+        // it against the stored SHA-256 hash - no plain-text comparison here.
+        User user = userDAO.authenticate(email, password);
+
+        if (user != null) {
+            loggedUser = user;
+            dispose();
+            return;
+        }
+
+        // Distinguish "email not found" vs "wrong password" for a clearer message,
+        // without leaking whether the account exists via timing differences.
+        if (userDAO.findByEmail(email) == null) {
+            showError("Email not found. Please register.");
+        } else {
+            showError("Incorrect password.");
         }
     }
 
