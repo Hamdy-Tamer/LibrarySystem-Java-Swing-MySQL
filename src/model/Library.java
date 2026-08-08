@@ -55,7 +55,7 @@ public class Library {
 
     // ---------- Remove a single book (only if not borrowed) ----------
     public boolean removeBook(int id) {
-        String sql = "DELETE FROM books WHERE id = ? AND borrowed = FALSE";
+        String sql = "DELETE FROM books WHERE book_id = ? AND borrowed = FALSE";
         try (Connection conn = DBConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setInt(1, id);
@@ -88,7 +88,7 @@ public class Library {
         LocalDate today = LocalDate.now();
         LocalDate returnDate = today.plusDays(borrowingPeriod);
         String sql = "UPDATE books SET borrowed = TRUE, borrowing_date = ?, borrowing_period = ?, return_date = ? "
-                + "WHERE id = ? AND borrowed = FALSE";
+                + "WHERE book_id = ? AND borrowed = FALSE";
         try (Connection conn = DBConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setDate(1, Date.valueOf(today));
@@ -115,7 +115,7 @@ public class Library {
     // ---------- Return a book ----------
     public boolean returnBook(int id) {
         String sql = "UPDATE books SET borrowed = FALSE, borrowing_date = NULL, borrowing_period = NULL, return_date = NULL "
-                + "WHERE id = ? AND borrowed = TRUE";
+                + "WHERE book_id = ? AND borrowed = TRUE";
         try (Connection conn = DBConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setInt(1, id);
@@ -135,7 +135,7 @@ public class Library {
 
     // ---------- Find a book by ID ----------
     public Book findBook(int id) {
-        String sql = "SELECT * FROM books WHERE id = ?";
+        String sql = "SELECT * FROM books WHERE book_id = ?";
         try (Connection conn = DBConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setInt(1, id);
@@ -224,7 +224,7 @@ public class Library {
     // ---------- Get all books ----------
     public List<Book> getBooks() {
         List<Book> allBooks = new ArrayList<>();
-        String sql = "SELECT * FROM books ORDER BY id";
+        String sql = "SELECT * FROM books ORDER BY book_id";
         try (Connection conn = DBConnection.getConnection();
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(sql)) {
@@ -266,7 +266,7 @@ public class Library {
         BookCategory category = BookCategory.fromString(categoryStr);
 
         Book book = new Book(rs.getString("name"), category);
-        book.setId(rs.getInt("id"));
+        book.setId(rs.getInt("book_id"));
         book.setBorrowed(rs.getBoolean("borrowed"));
 
         Date bDate = rs.getDate("borrowing_date");
